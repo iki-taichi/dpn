@@ -15,9 +15,9 @@
 #   まずサンプルをメモリーにロード,　整理
 #   モデルを構築(メタパラメータは"modelname".pklとしてpickleされる)
 #   定期的に"modelname".npzとして学習したパラメータを保存
-#   dpn_eval.pyで"modelname"をロードして予想とかを行う
+#   dpn_eval.pyで"modelname"をロードして予想を行う
+#   パラメタの設定はこのスクリプトの一番下のargで行う
 
-# 留意点
 #   - optimizerがadamではなくadadelta
 
 import pickle
@@ -33,6 +33,7 @@ import theano
 import theano.tensor as tensor
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 from theano import config
+import re
 
 config.exception_verbosity = 'high'
 
@@ -51,21 +52,28 @@ def get_sampleset(arg):
         if not dirpath.endswith('/'): dirpath += '/'
         print 'sampleset from ', dirpath
         
-        for subdirpath in os.listdir(dirpath):
-            seq = []
-            if not subdirpath.endswith('/'): subdirpath += '/'
-            for fn in sorted(os.listdir(dirpath + subdirpath)[:tslen], lambda x, y: int(x.replace('.png', ''))-int(y.replace('.png', ''))):
-                img = Image.open(dirpath + subdirpath + fn)
-                img = img.resize((imgw, imgh)) 
-                if imgch == 3:
-                    img = floatX_array(img.convert('RGB'))
-                    img = img.swapaxes(0, 2).swapaxes(1, 2)
-                    # shape [h, w, ch] -> [ch, h, W]
-                else:
-                    img = floatX_array(ImageOps.grayscale(img))
-                    img = img.reshape((1, imgh, imgw))
-                img = img / 255.0
-                seq.append(img)
+        imgcount = 0
+        seq = []
+        files = [(x, re.search('(\d+)',x)) for x in os.listdir(dirpath)]
+        files = map(lambda x: (x[0], int(x[1].group(0))), filter(lambda x:x[1], files))
+        for t in sorted(files, lambda x, y:x[1]-y[1]):
+            fn = t[0]
+            img = Image.open(dirpath + fn)
+            img = img.resize((imgw, imgh)) 
+            if imgch == 3:
+                img = floatX_array(img.convert('RGB'))
+                img = img.swapaxes(0, 2).swapaxes(1, 2)
+                # shape [h, w, ch] -> [ch, h, W]
+            else:
+                img = floatX_array(ImageOps.grayscale(img))
+                img = img.reshape((1, imgh, imgw))
+            img = img / 255.0
+            seq.append(img)
+            imgcount += 1
+            if imgcount % tslen == 0:
+                sampleset.append(seq)
+                seq = []
+        if len(seq) != 0:
             seq += [seq[-1]]*(tslen - len(seq))
             sampleset.append(seq)
     
@@ -448,7 +456,7 @@ if __name__ == '__main__':
     arg['imgw'] = 64
     arg['imgh'] = 36
     arg['imgch'] = 3
-    arg['samplesetpath'] = ['./sampleimg1', './sampleimg2']
+    arg['samplesetpath'] = ['./sample']
     arg['timesteplen'] = 10
     arg['validportion'] = 0.1
     arg['validbatchsize'] = 3
@@ -468,7 +476,7 @@ if __name__ == '__main__':
     arg['noisestd'] = 0.
     # arg['usedropout'] = True
     arg['premodelnpz'] = None
-    arg['modelname'] = 'model1'
+    arg['modelname'] = 'model2'
     arg['randomseed'] = 9973
     
     np.random.seed(arg['randomseed'])
