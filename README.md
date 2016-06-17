@@ -1,5 +1,6 @@
 # dpn
 deep predicitve coding networks demo
+Taichi Iki 2016-06-17
 
 Deep Predictive Coding Networks for Video Prediction and Unsupervised Learning
 William Lotter, Gabriel Kreiman, David Cox
@@ -10,18 +11,20 @@ KerasやChainerでのモデリングは諦めて、theanoで実装しました�
 かなり汚いです。
 
 注
-まだ、学習・予想という一連の動作が(エラーなく)動くようになったという段階で
-学習がうまくいった例はありませんが、何か参考になれば幸いです
+まだ学習・予想という一連の動作が(エラーなく)動くようになったという段階で
+学習がうまくいった例はありませんが、何か話題や参考になれば幸いです
+また、うまくい学習しない理由をわかる方がいましたらぜひご連絡ください。
 
 依存
 theano, PIL
 
 dpn_learn.py
 * 画像を学習させる。
-* 学習サンプルはディレクトリにまとめて番号を付けて入れておく(0.png, 1.png, 2.pngなど)
+* 学習サンプルはディレクトリ(sample)にまとめて番号を付けて入れておく(0.png, 1.png, 2.pngなど)
 * 数値順にソートしてtimestepごとにわけseqenceとして使います。
 * その他の設定は"if __name__ == '__main__':"以降を参照
 * modelの構築にもかなり時間がかかるので気長に待つ必要があります。
+* 学習が進むと ****.pkl, ****.npzができます。これらが学習したモデルになります。
 
 dpn_eval.py
 * loadで学習したモデルを読み込む。
