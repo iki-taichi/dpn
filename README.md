@@ -1,19 +1,19 @@
 # dpn
-deep predicitve coding networks demo ¥n
+deep predicitve coding networks demo  
 Taichi Iki 2016-06-17
 
-Deep Predictive Coding Networks for Video Prediction and Unsupervised Learning ¥n
-William Lotter, Gabriel Kreiman, David Cox ¥n
+Deep Predictive Coding Networks for Video Prediction and Unsupervised Learning  
+William Lotter, Gabriel Kreiman, David Cox  
 [https://arxiv.org/abs/1605.08104](https://arxiv.org/abs/1605.08104)
 
-をとりあえず動かしてみようというサンプルです。 ¥n
-KerasやChainerでのモデリングは諦めて、theanoで実装しました。 ¥n
+をとりあえず動かしてみようというサンプルです。  
+KerasやChainerでのモデリングは諦めて、theanoで実装しました。  
 かなり汚いです。
 
 注
-まだ学習・予想という一連の動作が(エラーなく)動くようになったという段階で ¥n
-学習がうまくいった例はありませんが、何か話題や参考になれば幸いです。 ¥n
-また、うまくい学習しない理由をわかる方がいましたらぜひ連絡をください。 ¥n
+まだ学習・予想という一連の動作が(エラーなく)動くようになったという段階で  
+学習がうまくいった例はありませんが、何か話題や参考になれば幸いです。  
+また、うまくい学習しない理由をわかる方がいましたらぜひ連絡をください。  
 
 ## 依存
 theano, PIL
