@@ -5,14 +5,16 @@
 # deep prednetのtheanoによる実装(評価の方)
 
 # 主要な関数
-#   - load
-#   - applyimg
+#   - load モデルファイルのロード
+#   - applyimg 画像をモデルに適用
+#   - predextra 画像seqを種に再構築画像/予想画像を生成
 
 # 使用法
 #   モデルを読み込んで入力画像をもとに内部状態を変換
 
 import itertools
 from PIL import Image 
+import os
 import pickle
 import numpy as np
 import theano
@@ -68,33 +70,33 @@ class model:
         f = theano.function([xx], tensor.signal.pool.pool_2d(xx, (2, 2), ignore_border=True))
         return f(x)
     
-    def ConvLSTM(self, param, layerid, layerinfo, E, R, C, RPP):
+    def ConvLSTM(self, param, layerid, layerinfo, E, R, C, RPP, padw):
         si = str(layerid)
         ch, h, w = layerinfo
-        zi = tensor.nnet.conv.conv2d(self.spad2d(E), param['cl_WE_'+si][0]).eval()
-        zi += tensor.nnet.conv.conv2d(self.spad2d(R), param['cl_WR_'+si][0]).eval()
+        zi = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][0]).eval()
+        zi += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][0]).eval()
         zi += C*(param['cl_WC_'+si][0])
         zi += param['cl_b_'+si][0]
     
-        zf = tensor.nnet.conv.conv2d(self.spad2d(E), param['cl_WE_'+si][1]).eval()
-        zf += tensor.nnet.conv.conv2d(self.spad2d(R), param['cl_WR_'+si][1]).eval()
+        zf = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][1]).eval()
+        zf += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][1]).eval()
         zf += param['cl_b_'+si][1]
     
-        zc = tensor.nnet.conv.conv2d(self.spad2d(E), param['cl_WE_'+si][2]).eval()
-        zc += tensor.nnet.conv.conv2d(self.spad2d(R), param['cl_WR_'+si][2]).eval()
+        zc = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][2]).eval()
+        zc += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][2]).eval()
         zc += C*(param['cl_WC_'+si][2])
         zc += param['cl_b_'+si][2]
     
-        zo = tensor.nnet.conv.conv2d(self.spad2d(E), param['cl_WE_'+si][3]).eval()
-        zo += tensor.nnet.conv.conv2d(self.spad2d(R), param['cl_WR_'+si][3]).eval()
+        zo = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][3]).eval()
+        zo += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][3]).eval()
         zo += C*(param['cl_WC_'+si][3])
         zo += param['cl_b_'+si][3]
     
         if RPP is not None:
-            zi += tensor.nnet.conv.conv2d(self.spad2d(RPP), param['cl_WRPP_'+si][0]).eval()
-            zf += tensor.nnet.conv.conv2d(self.spad2d(RPP), param['cl_WRPP_'+si][1]).eval()
-            zc += tensor.nnet.conv.conv2d(self.spad2d(RPP), param['cl_WRPP_'+si][2]).eval()
-            zo += tensor.nnet.conv.conv2d(self.spad2d(RPP), param['cl_WRPP_'+si][3]).eval()
+            zi += tensor.nnet.conv.conv2d(self.spad2d(RPP, padw, padw), param['cl_WRPP_'+si][0]).eval()
+            zf += tensor.nnet.conv.conv2d(self.spad2d(RPP, padw, padw), param['cl_WRPP_'+si][1]).eval()
+            zc += tensor.nnet.conv.conv2d(self.spad2d(RPP, padw, padw), param['cl_WRPP_'+si][2]).eval()
+            zo += tensor.nnet.conv.conv2d(self.spad2d(RPP, padw, padw), param['cl_WRPP_'+si][3]).eval()
     
         i = self.sigmoid(zi)
         f = self.sigmoid(zf)
@@ -105,22 +107,24 @@ class model:
     
     # x: [ch, h, w], 0.0 - 1.0 に正規化して入れる
     def applyimg(self, x):
-        if type(x) == str or ttype(x) == unicode:
+        if type(x) == str or type(x) == unicode:
             x = self.ptom(x)
         x = np.array(x.reshape((1, x.shape[0],x.shape[1],x.shape[2])), dtype=floatX)
 
         li = self.arg['layerinfo']
         ll = len(li)
+        padw = (self.arg['kernelsize'] - 1) // 2
+        
         E = self.E
         R = self.R
         recA = self.recA
         C = self.C
         A = self.A
         for i in reversed(range(0, ll)):
-            R[i], C[i] = self.ConvLSTM(self.param, i, li[i], E[i], R[i], C[i], None if i == ll-1 else self.Upsample(R[i+1]))
+            R[i], C[i] = self.ConvLSTM(self.param, i, li[i], E[i], R[i], C[i], None if i == ll-1 else self.Upsample(R[i+1]), padw)
         
         for i in range(0, ll):
-            tmp = tensor.nnet.conv.conv2d(self.spad2d(R[i]), self.param['cr_W_'+str(i)]).eval()
+            tmp = tensor.nnet.conv.conv2d(self.spad2d(R[i], padw, padw), self.param['cr_W_'+str(i)]).eval()
             tmp += self.param['cr_b_'+str(i)][None, :, None, None]
             recA[i] = self.relu(tmp)
         recA[0] = np.minimum(recA[0], 1.0)
@@ -132,7 +136,7 @@ class model:
             e2 = self.relu(A - recA[i])
             E[i] = np.concatenate([e1, e2], axis=1)
             if i != ll-1:
-                tmp = tensor.nnet.conv.conv2d(self.spad2d(E[i]), self.param['cu_W_'+str(i)]).eval()
+                tmp = tensor.nnet.conv.conv2d(self.spad2d(E[i], padw, padw), self.param['cu_W_'+str(i)]).eval()
                 tmp += self.param['cu_b_'+str(i)][None, :, None, None]
                 A = self.MaxPool(tmp)
         return recA[0]
@@ -165,6 +169,34 @@ class model:
             x = self.recA[0]
         s = x.shape
         return np.array(x.reshape((s[1], s[2], s[3])).swapaxes(0,2).swapaxes(0,1)*255, dtype='uint8')
+        
+    def toapply(self, x):
+        s = x.shape
+        return np.array(x.swapaxes(0,1).swapaxes(0,2), dtype=floatX)/255.0
+        
+    def predextra(self, seedimgpathlist, outputcount=0, show=True, savedir=None):
+        if outputcount <= 0: outputcount = self.arg['timesteplen']
+        if savedir is not None:
+            if not os.path.exists(savedir): os.mkdir(savedir)
+            if not savedir.endswith('/'): savedir += '/'
+        self.resetstate()
+        
+        count = 0
+        for p in seedimgpathlist:
+            arr = self.forcv(self.applyimg(p))
+            img = Image.fromarray(arr)
+            if savedir: img.save(savedir + str(count) + '.png')
+            if show: img.show()
+            count += 1
+            print '%d / %d done'%(count, outputcount)
+        
+        for i in range(0, outputcount - count):
+            arr = self.forcv(self.applyimg(self.toapply(arr)))
+            img = Image.fromarray(arr)
+            if savedir: img.save(savedir + str(count) + '.png')
+            if show: img.show()
+            count += 1
+            print '%d / %d done'%(count, outputcount)
 
 def load(modelname):
     a = model()
