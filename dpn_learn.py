@@ -111,24 +111,25 @@ def init_param(arg):
     # convToUpperLayer(cu): cu_W, cu_b
     
     param = {}
+    factor = 0.1
     
     ks = arg['kernelsize']
     for i in range(0, arg['layercount']):
         ch, h, w = arg['layerinfo'][i]
         # {i, f, c, o}, filter, inputchannel, h, w
-        param['cl_WE_' + str(i)] = floatX_array(np.random.randn(4, ch, 2*ch, ks, ks))
-        param['cl_WR_' + str(i)] = floatX_array(np.random.randn(4, ch, ch, ks, ks))
+        param['cl_WE_' + str(i)] = floatX_array(np.random.randn(4, ch, 2*ch, ks, ks)*factor)
+        param['cl_WR_' + str(i)] = floatX_array(np.random.randn(4, ch, ch, ks, ks)*factor)
         if i != arg['layercount'] -1:
-            param['cl_WRPP_' + str(i)] = floatX_array(np.random.randn(4, ch, arg['layerinfo'][i+1][0], ks, ks))
-        param['cl_WC_' + str(i)] = floatX_array(np.random.randn(4, ch, h, w))
+            param['cl_WRPP_' + str(i)] = floatX_array(np.random.randn(4, ch, arg['layerinfo'][i+1][0], ks, ks)*factor)
+        param['cl_WC_' + str(i)] = floatX_array(np.random.randn(4, ch, h, w)*factor)
         param['cl_b_' + str(i)] = floatX_array(np.zeros((4, ch, h, w)))
         
         # (filternum, inputchannelnum, h, w)
-        param['cr_W_' + str(i)] = floatX_array(np.random.randn(ch, ch, ks, ks))
+        param['cr_W_' + str(i)] = floatX_array(np.random.randn(ch, ch, ks, ks)*factor)
         param['cr_b_' + str(i)] = floatX_array(np.zeros((ch)))
         
         if i != arg['layercount'] -1:
-            param['cu_W_' + str(i)] = floatX_array(np.random.randn(arg['layerinfo'][i+1][0], ch*2, ks, ks))
+            param['cu_W_' + str(i)] = floatX_array(np.random.randn(arg['layerinfo'][i+1][0], ch*2, ks, ks)*factor)
             param['cu_b_' + str(i)] = floatX_array(np.zeros((arg['layerinfo'][i+1][0])))
         
     return param
@@ -193,7 +194,7 @@ def spad2d(x, plast=1, psecondlast=1):
     indices += [slice(plast, input_shape[-1] + plast)]
     return tensor.set_subtensor(output[tuple(indices)], x)
 
-def ConvLSTM(theanoshared, batchsize, layerid, layerinfo, E, R, C, RPP):
+def ConvLSTM(theanoshared, batchsize, layerid, layerinfo, E, R, C, RPP, padw):
     #E: batchsize, 2, ch=numlayerch, h, w (conv)
     #R: batchsize, ch=numlayerch, h, w (conv)
     #C: batchsize, ch=numlayerch, h, w (elemwise)
@@ -201,30 +202,30 @@ def ConvLSTM(theanoshared, batchsize, layerid, layerinfo, E, R, C, RPP):
     #RPP: batchsize, ch=2*numlayerch, h, w (conv)
     si = str(layerid)
     ch, h, w = layerinfo
-    zi = tensor.nnet.conv.conv2d(spad2d(E), theanoshared['cl_WE_'+si][0])
-    zi += tensor.nnet.conv.conv2d(spad2d(R), theanoshared['cl_WR_'+si][0])
+    zi = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][0])
+    zi += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][0])
     zi += C*(theanoshared['cl_WC_'+si][0])
     zi += theanoshared['cl_b_'+si][0]
     
-    zf = tensor.nnet.conv.conv2d(spad2d(E), theanoshared['cl_WE_'+si][1])
-    zf += tensor.nnet.conv.conv2d(spad2d(R), theanoshared['cl_WR_'+si][1])
+    zf = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][1])
+    zf += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][1])
     zf += theanoshared['cl_b_'+si][1]
     
-    zc = tensor.nnet.conv.conv2d(spad2d(E), theanoshared['cl_WE_'+si][2])
-    zc += tensor.nnet.conv.conv2d(spad2d(R), theanoshared['cl_WR_'+si][2])
+    zc = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][2])
+    zc += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][2])
     zc += C*(theanoshared['cl_WC_'+si][2])
     zc += theanoshared['cl_b_'+si][2]
     
-    zo = tensor.nnet.conv.conv2d(spad2d(E), theanoshared['cl_WE_'+si][3])
-    zo += tensor.nnet.conv.conv2d(spad2d(R), theanoshared['cl_WR_'+si][3])
+    zo = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][3])
+    zo += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][3])
     zo += C*(theanoshared['cl_WC_'+si][3])
     zo += theanoshared['cl_b_'+si][3]
     
     if RPP is not None:
-        zi += tensor.nnet.conv.conv2d(spad2d(RPP), theanoshared['cl_WRPP_'+si][0])
-        zf += tensor.nnet.conv.conv2d(spad2d(RPP), theanoshared['cl_WRPP_'+si][1])
-        zc += tensor.nnet.conv.conv2d(spad2d(RPP), theanoshared['cl_WRPP_'+si][2])
-        zo += tensor.nnet.conv.conv2d(spad2d(RPP), theanoshared['cl_WRPP_'+si][3])
+        zi += tensor.nnet.conv.conv2d(spad2d(RPP, padw, padw), theanoshared['cl_WRPP_'+si][0])
+        zf += tensor.nnet.conv.conv2d(spad2d(RPP, padw, padw), theanoshared['cl_WRPP_'+si][1])
+        zc += tensor.nnet.conv.conv2d(spad2d(RPP, padw, padw), theanoshared['cl_WRPP_'+si][2])
+        zo += tensor.nnet.conv.conv2d(spad2d(RPP, padw, padw), theanoshared['cl_WRPP_'+si][3])
     
     i = tensor.nnet.sigmoid(zi)
     f = tensor.nnet.sigmoid(zf)
@@ -244,6 +245,7 @@ def build_model(arg, theanoshared):
     ll = arg['layercount']
     kernelsize = arg['kernelsize']
     timestep = arg['timesteplen']
+    padw = (arg['kernelsize'] - 1) // 2
     off = 1e-8 if config.floatX != 'float16' else 1e-6
     
     # timestepがそろったseqをbatchsizeの分だけまとめて計算
@@ -279,12 +281,12 @@ def build_model(arg, theanoshared):
         print 'handing timestep', 1+t, '/', timestep, ':',
         #
         for i in reversed(range(0, ll)):
-            R[i], C[i] = ConvLSTM(theanoshared, batchsize, i, li[i], E[i], R[i], C[i], None if i == ll-1 else Upsample(R[i+1]))
+            R[i], C[i] = ConvLSTM(theanoshared, batchsize, i, li[i], E[i], R[i], C[i], None if i == ll-1 else Upsample(R[i+1]), padw)
         print 'ConvLSTM',
         
         #
         for i in range(0, ll):
-            tmp = tensor.nnet.conv.conv2d(spad2d(R[i]), theanoshared['cr_W_'+str(i)])
+            tmp = tensor.nnet.conv.conv2d(spad2d(R[i], padw, padw), theanoshared['cr_W_'+str(i)])
             tmp += theanoshared['cr_b_'+str(i)][None, :, None, None]
             recA[i] = tensor.nnet.relu(tmp)
         recA[0] = tensor.minimum(recA[0], 1.0)
@@ -298,7 +300,7 @@ def build_model(arg, theanoshared):
             e2 = tensor.nnet.relu(A - recA[i])
             E[i] = tensor.concatenate([e1, e2], axis=1)
             if i != ll-1:
-                tmp = tensor.nnet.conv.conv2d(spad2d(E[i]), theanoshared['cu_W_'+str(i)])
+                tmp = tensor.nnet.conv.conv2d(spad2d(E[i], padw, padw), theanoshared['cu_W_'+str(i)])
                 tmp += theanoshared['cu_b_'+str(i)][None, :, None, None]
                 A = tensor.signal.pool.pool_2d(tmp, (2, 2), ignore_border=True)
         print 'error_calc',
@@ -448,35 +450,35 @@ def train_network(arg, model, sampleset):
 if __name__ == '__main__':
     arg = {}
     arg['dispfreq'] = 10
-    arg['costsavefreq'] = 100
-    arg['validfreq'] = 500
-    arg['savefreq'] = 500
-    arg['maxepochs'] = 5000
+    arg['costsavefreq'] = 50
+    arg['validfreq'] = 200
+    arg['savefreq'] = 200
+    arg['maxepochs'] = 500
     
-    arg['imgw'] = 64
-    arg['imgh'] = 36
+    arg['imgw'] = 128
+    arg['imgh'] = 72
     arg['imgch'] = 3
     arg['samplesetpath'] = ['./sample']
-    arg['timesteplen'] = 10
+    arg['timesteplen'] = 8
     arg['validportion'] = 0.1
-    arg['validbatchsize'] = 3
+    arg['validbatchsize'] = 2
 
     # レイヤー情報(下層から) (チャンネル数(フィルタ数), height, width)
     # 第0層は入力イメージと同一にする
     # 層が上がるごとにheight, widthは半減する(maxpoolのせい)
     # arg['layerinfo'] = [(3, 144, 256), (16, 72, 128), (32, 36, 64), (64, 18, 32), (128, 9, 16)]
-    arg['layerinfo'] = [(3, 36, 64), (32, 18, 32), (64, 9, 16)]
+    arg['layerinfo'] = [(3, 72, 128), (8, 36, 64), (32, 18, 32), (128, 9, 16)]
     arg['layercount'] = len(arg['layerinfo'])
     # すべてのconvのカーネルサイズ
-    arg['kernelsize'] = 3
+    arg['kernelsize'] = 5
     
     arg['lrate'] = 0.0001
     arg['patience'] = 10
-    arg['batchsize'] = 3
+    arg['batchsize'] = 2
     arg['noisestd'] = 0.
     # arg['usedropout'] = True
     arg['premodelnpz'] = None
-    arg['modelname'] = 'model2'
+    arg['modelname'] = 'model'
     arg['randomseed'] = 9973
     
     np.random.seed(arg['randomseed'])
