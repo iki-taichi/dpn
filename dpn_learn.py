@@ -293,7 +293,7 @@ def build_model(arg, theanoshared):
         print 'reconstruct_A',
         
         #
-        A = x_swapped[i]
+        A = x_swapped[t]
         for i in range(0, ll):
             ch, h, w = li[i]
             e1 = tensor.nnet.relu(recA[i] - A)
@@ -332,9 +332,11 @@ def construct_model(arg):
     print 'model building'
     (x, cost, f_image_err) = build_model(arg, theanoshared)
 
+    print 'calc grad'
     grads = tensor.grad(cost, wrt=list(theanoshared.values()))
     #f_grad = theano.function([xs, masks], grads, name='f_grad')
 
+    print 'calc optimizer'
     lr = tensor.scalar(name='lr')
     f_grad_shared, f_update = adadelta(lr, theanoshared, grads, x, cost)
     
@@ -364,7 +366,7 @@ def train_network(arg, model, sampleset):
     lrate = arg['lrate']
     
     zippath = './' + arg['modelname'] + '.npz'
-    pklpath = './' + arg['modelname'] + '.pkl'
+    pklpath = './' + arg['modelname'] + '.pklb'
     
     arg['history'] = []
     history = arg['history']
@@ -410,7 +412,7 @@ def train_network(arg, model, sampleset):
                     print u'Saving...'
                     param = bestparam if bestparam != None else get_param(theanoshared)
                     np.savez(zippath, **param)
-                    with open(pklpath, 'w') as f: pickle.Pickler(f).dump(arg)
+                    with open(pklpath, 'wb') as f: pickle.Pickler(f).dump(arg)
                     print u'Done'
 
                 if updatecount % validfreq == 0:
@@ -440,7 +442,7 @@ def train_network(arg, model, sampleset):
     
     if bestparam == None: bestparam = get_param(theanoshared)
     np.savez(zippath, **bestparam)
-    with open(pklpath, 'w') as f: pickle.Pickler(f).dump(arg)
+    with open(pklpath, 'wb') as f: pickle.Pickler(f).dump(arg)
     
     print u'%d epochs with %f sec/epochs' %((epochid + 1), (endtime - starttime) / (float(epochid + 1)))
     print u'Training took %.1fs'%(endtime - starttime)
@@ -458,7 +460,7 @@ if __name__ == '__main__':
     arg['imgw'] = 128
     arg['imgh'] = 72
     arg['imgch'] = 3
-    arg['samplesetpath'] = ['./sample']
+    arg['samplesetpath'] = ['./sample_anime']
     arg['timesteplen'] = 8
     arg['validportion'] = 0.1
     arg['validbatchsize'] = 2
@@ -478,7 +480,7 @@ if __name__ == '__main__':
     arg['noisestd'] = 0.
     # arg['usedropout'] = True
     arg['premodelnpz'] = None
-    arg['modelname'] = 'model'
+    arg['modelname'] = 'model_anime'
     arg['randomseed'] = 9973
     
     np.random.seed(arg['randomseed'])
