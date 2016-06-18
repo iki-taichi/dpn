@@ -202,7 +202,11 @@ def load(modelname):
     a = model()
     a.zippath = u'./' + modelname + u'.npz'
     a.pklpath = u'./' + modelname + u'.pkl'
-    with open(a.pklpath, 'r') as f: a.arg = pickle.Unpickler(f).load()
+    a.pklbpath = u'./' + modelname + u'.pklb'
+    if os.path.exists(a.pklbpath):
+        with open(a.pklbpath, 'rb') as f: a.arg = pickle.Unpickler(f).load()
+    else:
+        with open(a.pklpath, 'r') as f: a.arg = pickle.Unpickler(f).load()
     npz = np.load(a.zippath)
     a.param = {}
     for k, v in npz.items(): a.param[k] = v
