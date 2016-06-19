@@ -5,15 +5,15 @@
 # deep prednetのtheanoによる実装(評価の方)
 
 # 主要な関数
-#   - load モデルファイルのロード
-#   - applyimg 画像をモデルに適用
-#   - predextra 画像seqを種に再構築画像/予想画像を生成
+#   - load
+#   - applyimg
 
 # 使用法
 #   モデルを読み込んで入力画像をもとに内部状態を変換
 
 import itertools
-from PIL import Image 
+from PIL import Image
+from PIL import ImageOps
 import os
 import pickle
 import numpy as np
@@ -23,7 +23,17 @@ from theano import tensor
 floatX = np.float32
 
 class model:
+    def showh(self):
+        u'''validation errorの履歴を表示'''
+        for x in self.arg['history']: print x[0], x[1]
+        
+    def showch(self):
+        u'''train errorの履歴を表示'''
+        for x in self.arg['costhistory']: print x[1], x[2]
+    
+    u'''dpn_eval.load(modelpath)の戻り値'''
     def resetstate(self):
+        u'''内部状態E, R, recA, C, Aを0に初期化'''
         li = self.arg['layerinfo']
         self.E = []
         self.R = []
@@ -40,18 +50,22 @@ class model:
             self.A.append(np.zeros((1, ch, h, w), floatX))
     
     def relu(self, x):
+        u'''計算に使用'''
         x = np.maximum(x, 0)
         x = x * (x > 0)
         return (abs(x) + x) / 2
         
     def sigmoid(self, x):
+        u'''計算に使用'''
         return 1.0 / (1.0 + np.exp(-x))
 
     def Upsample(self, x):
+        u'''計算に使用; axis2, 3を2倍に拡大(nearest-neighbor)'''
         t = np.repeat(x, 2, axis=2)
         return np.repeat(t, 2, axis=3)
         
     def spad2d(self, x, plast=1, psecondlast=1):
+        u'''計算に使用; 最後と最後から2番目の次元の両端に指定個0を挿入'''
         input_shape = x.shape
         output_shape = list(input_shape)
         output_shape[-1] += 2* plast
@@ -66,11 +80,13 @@ class model:
         return f(output, x)
         
     def MaxPool(self, x):
+        u'''計算に使用; max poolingで大きさを1/2にする'''
         xx = tensor.TensorType(theano.config.floatX, (False,)*len(x.shape))()
         f = theano.function([xx], tensor.signal.pool.pool_2d(xx, (2, 2), ignore_border=True))
         return f(x)
     
     def ConvLSTM(self, param, layerid, layerinfo, E, R, C, RPP, padw):
+        u'''計算に使用; ConvLSTMの計算'''
         si = str(layerid)
         ch, h, w = layerinfo
         zi = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][0]).eval()
@@ -80,11 +96,11 @@ class model:
     
         zf = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][1]).eval()
         zf += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][1]).eval()
+        zf += C*(param['cl_WC_'+si][1])
         zf += param['cl_b_'+si][1]
     
         zc = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][2]).eval()
         zc += tensor.nnet.conv.conv2d(self.spad2d(R, padw, padw), param['cl_WR_'+si][2]).eval()
-        zc += C*(param['cl_WC_'+si][2])
         zc += param['cl_b_'+si][2]
     
         zo = tensor.nnet.conv.conv2d(self.spad2d(E, padw, padw), param['cl_WE_'+si][3]).eval()
@@ -105,98 +121,131 @@ class model:
         Rnext = o * np.tanh(Cnext)
         return (Rnext, Cnext)
     
-    # x: [ch, h, w], 0.0 - 1.0 に正規化して入れる
-    def applyimg(self, x):
-        if type(x) == str or type(x) == unicode:
-            x = self.ptom(x)
-        x = np.array(x.reshape((1, x.shape[0],x.shape[1],x.shape[2])), dtype=floatX)
-
+    def pathtoitensor(self, imgpath):
+        u'''画像のパスをうけてnumpy.arrayを返す'''
+        imgch, imgh, imgw = self.imgshape
+        img = Image.open(imgpath)
+        img = img.resize((imgw, imgh))
+        if imgch == 3:
+            itensor = np.array(img.convert('RGB'))
+        else:
+            itensor = np.array(ImageOps.grayscale(img))
+        return itensor
+    
+    def itensortotesnor(self, itensor):
+        u'''itensor[h, w(, ch)] 0-255 -> tensor[ch, h, w] 0.0-1.0'''
+        t = np.array(itensor, dtype=floatX)
+        t /= 255.0
+        if len(t.shape) == 2:
+            t = t.reshape((t.shape[0], t.shape[1], 1))
+        t = t.swapaxes(0, 2).swapaxes(1, 2)
+        t = t.reshape((1, t.shape[0], t.shape[1], t.shape[2])) 
+        return  t
+    
+    def tensortoitensor(self, t):
+        u'''tensor[ch, h, w] 0.0-1.0 -> itensor[h, w, ch] 0-255'''
+        it = np.array(t)
+        it = it.reshape((t.shape[1], t.shape[2], t.shape[3]))
+        it = it.swapaxes(1, 2).swapaxes(0, 2)
+        if it.shape[2] == 1:
+            it = it.reshape((it.shape[0], it.shape[1]))
+        it *= 255
+        it = np.array(it, dtype='uint8')
+        return  it
+    def ttoit(self, t):
+        return self.tensortoitensor(t)
+    
+    def procConvLSTM(self, R=None, C=None):
+        u'''内部状態E, R, Cを使って計算し, 引数のR, Cに新しい状態を入れる'''
         li = self.arg['layerinfo']
         ll = len(li)
         padw = (self.arg['kernelsize'] - 1) // 2
         
-        E = self.E
-        R = self.R
-        recA = self.recA
-        C = self.C
-        A = self.A
+        if R is None: R = self.R
+        if C is None: C = self.C
+        
         for i in reversed(range(0, ll)):
-            R[i], C[i] = self.ConvLSTM(self.param, i, li[i], E[i], R[i], C[i], None if i == ll-1 else self.Upsample(R[i+1]), padw)
+            R[i], C[i] = self.ConvLSTM(self.param, i, li[i], self.E[i], self.R[i], self.C[i], 
+                None if i == ll-1 else self.Upsample(self.R[i+1]), padw)
+    
+    def procRecA(self, recA=None):
+        u'''内部状態Rを使って計算し, 引数のrecAに新しい状態を入れる'''
+        li = self.arg['layerinfo']
+        ll = len(li)
+        padw = (self.arg['kernelsize'] - 1) // 2
+        
+        if recA is None: recA = self.recA
         
         for i in range(0, ll):
-            tmp = tensor.nnet.conv.conv2d(self.spad2d(R[i], padw, padw), self.param['cr_W_'+str(i)]).eval()
+            tmp = tensor.nnet.conv.conv2d(self.spad2d(self.R[i], padw, padw), self.param['cr_W_'+str(i)]).eval()
             tmp += self.param['cr_b_'+str(i)][None, :, None, None]
             recA[i] = self.relu(tmp)
         recA[0] = np.minimum(recA[0], 1.0)
+    
+    def procEandA(self, x, E=None, A=None):
+        u'''入力xと内部状態recAを使って計算し, 引数のE, Aに新しい状態を入れる'''
+        li = self.arg['layerinfo']
+        ll = len(li)
+        padw = (self.arg['kernelsize'] - 1) // 2
         
-        A = x
+        if E is None: E = self.E
+        if A is None: A = self.A
+        
+        A[0] = x
         for i in range(0, ll):
             ch, h, w = li[i]
-            e1 = self.relu(recA[i] - A)
-            e2 = self.relu(A - recA[i])
+            e1 = self.relu(self.recA[i] - A[i])
+            e2 = self.relu(A[i] - self.recA[i])
             E[i] = np.concatenate([e1, e2], axis=1)
             if i != ll-1:
                 tmp = tensor.nnet.conv.conv2d(self.spad2d(E[i], padw, padw), self.param['cu_W_'+str(i)]).eval()
                 tmp += self.param['cu_b_'+str(i)][None, :, None, None]
-                A = self.MaxPool(tmp)
-        return recA[0]
-
-    def showh(self):
-        for x in self.arg['history']: print x[0], x[1]
+                A[i+1] = self.MaxPool(tmp)
+    
+    def applyimg(self, x):
+        u'''画像をモデルに作用させる
+        x: 画像パスまたは画像をnumpy.arrayにしたもの
+        出力: 事前に予想された画像
+        * 内部状態が変わる
+        '''
         
-    def showch(self):
-        for x in self.arg['costhistory']: print x[1], x[2]
-
-    def imgshape(self):
-        return (self.arg['imgch'], self.arg['imgh'], self.arg['imgw'])
-
-    def ptom(self, imgpath):
-        imgch, imgh, imgw = self.imgshape
-        img = Image.open(imgpath)
-        img = img.resize((imgw, imgh)) 
-        if imgch == 3:
-            img = np.array(img.convert('RGB'))
-            img = img.swapaxes(0, 2).swapaxes(1, 2)
-            # shape [h, w, ch] -> [ch, h, W]
-        else:
-            img = np.array(ImageOps.grayscale(img))
-            img = img.reshape((1, imgh, imgw))
-        img = img / 255.0
-        return img
-
-    def forcv(self, x=None):
-        if x is None:
-            x = self.recA[0]
-        s = x.shape
-        return np.array(x.reshape((s[1], s[2], s[3])).swapaxes(0,2).swapaxes(0,1)*255, dtype='uint8')
+        # 入力を変換する
+        if type(x) == str or type(x) == unicode:
+            x = self.pathtoitensor(x)
+        x = self.itensortotesnor(x)
         
-    def toapply(self, x):
-        s = x.shape
-        return np.array(x.swapaxes(0,1).swapaxes(0,2), dtype=floatX)/255.0
+        self.procConvLSTM()
+        self.procRecA()
+        self.procEandA(x)
         
+        return self.tensortoitensor(self.recA[0])
+    
     def predextra(self, seedimgpathlist, outputcount=0, show=True, savedir=None):
+        u'''種となる画像のseqを受け取って画像列を保存'''
         if outputcount <= 0: outputcount = self.arg['timesteplen']
         if savedir is not None:
             if not os.path.exists(savedir): os.mkdir(savedir)
             if not savedir.endswith('/'): savedir += '/'
         self.resetstate()
-        
+        factor = 1.0*self.imgshape[0]*self.imgshape[1]*self.imgshape[2]
+        print 'sum E[0] > 0.0:', (self.E[0]>0.0).sum()/factor, ', sum E[0]:', self.E[0].sum()/factor
         count = 0
         for p in seedimgpathlist:
-            arr = self.forcv(self.applyimg(p))
+            arr = self.applyimg(p)
             img = Image.fromarray(arr)
             if savedir: img.save(savedir + str(count) + '.png')
             if show: img.show()
             count += 1
-            print '%d / %d done'%(count, outputcount)
+            print '%d / %d done'%(count, outputcount), 'sum E[0] > 0.0:', (self.E[0]>0.0).sum()/factor, ', sum E[0]:', self.E[0].sum()/factor
+            if count >= outputcount: break
         
         for i in range(0, outputcount - count):
-            arr = self.forcv(self.applyimg(self.toapply(arr)))
+            arr = self.applyimg(arr)
             img = Image.fromarray(arr)
             if savedir: img.save(savedir + str(count) + '.png')
             if show: img.show()
             count += 1
-            print '%d / %d done'%(count, outputcount)
+            print '%d / %d done'%(count, outputcount), 'sum E[0] > 0.0:', (self.E[0]>0.0).sum()/factor, ', sum E[0]:', self.E[0].sum()/factor
 
 def load(modelname):
     a = model()
