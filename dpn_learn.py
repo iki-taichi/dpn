@@ -209,11 +209,11 @@ def ConvLSTM(theanoshared, batchsize, layerid, layerinfo, E, R, C, RPP, padw):
     
     zf = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][1])
     zf += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][1])
+    zf += C*(theanoshared['cl_WC_'+si][1])
     zf += theanoshared['cl_b_'+si][1]
     
     zc = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][2])
     zc += tensor.nnet.conv.conv2d(spad2d(R, padw, padw), theanoshared['cl_WR_'+si][2])
-    zc += C*(theanoshared['cl_WC_'+si][2])
     zc += theanoshared['cl_b_'+si][2]
     
     zo = tensor.nnet.conv.conv2d(spad2d(E, padw, padw), theanoshared['cl_WE_'+si][3])
@@ -246,17 +246,18 @@ def build_model(arg, theanoshared):
     kernelsize = arg['kernelsize']
     timestep = arg['timesteplen']
     padw = (arg['kernelsize'] - 1) // 2
-    off = 1e-8 if config.floatX != 'float16' else 1e-6
     
     # timestepがそろったseqをbatchsizeの分だけまとめて計算
     
     # input symbols
-    # x: 1つのbatch 足は5つ [seqid, timestep, ch, w, h]
+    # x: 1つのbatch 足は5つ [batchnum, timestep, ch, w, h]
     x = tensor.TensorType(config.floatX, (False,)*5)('x')
     #usenoise = theano.shared(floatX_array(0.))
     
     # 各足の長さ
     batchsize = x.shape[0]
+    pixelcount = batchsize * li[0][0] * li[0][1] * li[0][2]
+    factor = 1.0-np.exp(-1.0)
     
     # 各層のE, Rの領域を確保, 初期化
     print 'build model_phase_alloc'
@@ -264,6 +265,7 @@ def build_model(arg, theanoshared):
     R = []
     recA = []
     C = []
+    costbuf = [] #tensor.alloc(floatX_array(0.), timestep)
     for i in range(0, ll):
         ch, h, w = li[i]
         # Errorは+/-で2倍
@@ -275,7 +277,7 @@ def build_model(arg, theanoshared):
     cost = 0.
     
     print 'build model_phase_timestep'
-    # x_swapped: [timestep, seqid, ch, w, h]
+    # x_swapped: [timestep, batchnum, ch, w, h]
     x_swapped = x.swapaxes(0, 1)
     for t in range(0, timestep):
         print 'handing timestep', 1+t, '/', timestep, ':',
@@ -306,10 +308,13 @@ def build_model(arg, theanoshared):
         print 'error_calc',
         
         #
-        if t != 0: cost += E[0].mean()
+        # if t != 0: cost += E[0].mean()
+        # if t != 0: cost += ((1-tensor.exp(-E[0]))/factor).sum()
+        # if t != 0: cost += (E[0] > 0.1).sum()
+        costbuf.append(E[0].sum())
         print 'cost'
     
-    cost = cost / timestep
+    cost = np.array(costbuf[1:]).sum() / ((timestep-1.0)*pixelcount)
     f_image_err = theano.function([x], cost, name='f_image_err')
     
     return (x, cost, f_image_err)
@@ -453,34 +458,37 @@ if __name__ == '__main__':
     arg = {}
     arg['dispfreq'] = 10
     arg['costsavefreq'] = 50
-    arg['validfreq'] = 200
-    arg['savefreq'] = 200
-    arg['maxepochs'] = 500
+    arg['validfreq'] = 100
+    arg['savefreq'] = 100
+    arg['maxepochs'] = 200
     
-    arg['imgw'] = 128
+    #arg['imgw'] = 128
+    #arg['imgh'] = 72
+    arg['imgw'] = 96
     arg['imgh'] = 72
     arg['imgch'] = 3
-    arg['samplesetpath'] = ['./sample_anime']
-    arg['timesteplen'] = 8
+    arg['samplesetpath'] = ['./sample3']
+    arg['timesteplen'] = 6
     arg['validportion'] = 0.1
-    arg['validbatchsize'] = 2
+    arg['validbatchsize'] = 3
 
     # レイヤー情報(下層から) (チャンネル数(フィルタ数), height, width)
     # 第0層は入力イメージと同一にする
     # 層が上がるごとにheight, widthは半減する(maxpoolのせい)
     # arg['layerinfo'] = [(3, 144, 256), (16, 72, 128), (32, 36, 64), (64, 18, 32), (128, 9, 16)]
-    arg['layerinfo'] = [(3, 72, 128), (8, 36, 64), (32, 18, 32), (128, 9, 16)]
+    # arg['layerinfo'] = [(3, 72, 128), (8, 36, 64), (32, 18, 32), (128, 9, 16)]
+    arg['layerinfo'] = [(3, 72, 96), (32, 36, 48), (48, 18, 24), (96, 9, 12)]
     arg['layercount'] = len(arg['layerinfo'])
     # すべてのconvのカーネルサイズ
-    arg['kernelsize'] = 5
+    arg['kernelsize'] = 3
     
     arg['lrate'] = 0.0001
     arg['patience'] = 10
-    arg['batchsize'] = 2
+    arg['batchsize'] = 3
     arg['noisestd'] = 0.
     # arg['usedropout'] = True
     arg['premodelnpz'] = None
-    arg['modelname'] = 'model_anime'
+    arg['modelname'] = 'model_mv_fix8'
     arg['randomseed'] = 9973
     
     np.random.seed(arg['randomseed'])
@@ -488,6 +496,7 @@ if __name__ == '__main__':
     # sampleset: [batchid, ch1, ch2, ch3, ...]
     # 値は255で割って0～1のfloatXとしてある.
     sampleset = get_sampleset(arg)
+   
     model = construct_model(arg)
     train_network(arg, model, sampleset)
     
